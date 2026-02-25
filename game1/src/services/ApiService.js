@@ -99,6 +99,26 @@ class ApiService {
     });
   }
 
+  async saveSlot(slot, payload) {
+    return this.request(`/save/${slot}`, 'PUT', { payload });
+  }
+
+  async loadSlot(slot) {
+    return this.request(`/save/${slot}`, 'GET');
+  }
+
+  async reportDialogueOutcome(payload) {
+    return this.request('/npc/dialogueOutcome', 'POST', payload);
+  }
+
+  async reportClueResolve(payload) {
+    return this.request('/clue/resolve', 'POST', payload);
+  }
+
+  async reportRunEvent(payload) {
+    return this.request('/run/event', 'POST', payload);
+  }
+
   getFallbackResponse(character) {
     return `I'm sorry, ${character.name || 'the character'} is unavailable at the moment. Please try again later.`;
   }

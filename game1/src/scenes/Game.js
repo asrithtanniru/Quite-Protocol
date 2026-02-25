@@ -3,6 +3,10 @@ import Character from '../classes/Character';
 import DialogueBox from '../classes/DialogueBox';
 import DialogueManager from '../classes/DialogueManager';
 import VoiceChatService from '../services/VoiceChatService';
+import SaveService from '../services/SaveService';
+import ApiService from '../services/ApiService';
+import RunStateManager from '../systems/RunStateManager';
+import IncidentManager from '../systems/IncidentManager';
 
 export class Game extends Scene
 {
@@ -29,12 +33,41 @@ export class Game extends Scene
         this.menuButton = null;
         this.logoutButton = null;
         this.menuPanel = null;
+        this.scanKey = null;
+        this.clueBoardKey = null;
+        this.choiceKey1 = null;
+        this.choiceKey2 = null;
+        this.choiceKey3 = null;
+        this.choiceCancelKey = null;
+        this.profileKey = null;
+        this.saveKey = null;
+        this.choicePanel = null;
+        this.choiceContext = null;
+        this.hudText = null;
+        this.clueBoardPanel = null;
+        this.profilePanel = null;
+        this.patrols = [];
+        this.lastPatrolDamageTime = 0;
+        this.eventText = null;
+        this.currentEvent = null;
+        this.eventTimer = null;
+        this.eventEndTimer = null;
+        this.vignette = null;
+        this.nextAutoSaveAt = 0;
+        this.runState = null;
+        this.incidentManager = null;
+        this.environmentClues = [];
+        this.playerDead = false;
     }
 
     init (data)
     {
         const rawPlayerName = data?.playerName;
         this.playerName = rawPlayerName?.trim() || 'Subject-0';
+
+        const saveData = SaveService.load(this.playerName, 1);
+        this.runState = new RunStateManager(saveData?.runState || {});
+        this.incidentManager = new IncidentManager(saveData?.incidentState || null);
     }
 
     create ()
@@ -53,7 +86,19 @@ export class Game extends Scene
         this.createProximityDialogue();
         this.createNpcDistancePanel();
         this.createVoiceStatusPanel();
+        this.createEventPanel();
+        this.createHudPanel();
+        this.createClueBoardPanel();
+        this.createProfilePanel();
+        this.createChoicePanel();
+        this.createVignette();
         this.createTopBarUi();
+        this.createEnvironmentClues();
+        this.createPatrols(layers.worldLayer);
+        this.scheduleInstitutionalEvent();
+        this.refreshClueBoardText();
+        this.refreshProfileText();
+        this.nextAutoSaveAt = this.time.now + 30000;
 
         this.events.on('shutdown', this.handleSceneShutdown, this);
     }
@@ -391,7 +436,7 @@ export class Game extends Scene
             lineSpacing: 5
         });
 
-        const hintText = this.add.text(boxX + boxWidth - 12, boxY + boxHeight - 8, 'Press A to connect voice', {
+        const hintText = this.add.text(boxX + boxWidth - 12, boxY + boxHeight - 8, 'A voice | E dialogue | F scan', {
             font: '12px monospace',
             color: '#ffd28f'
         }).setOrigin(1, 1);
@@ -417,7 +462,7 @@ export class Game extends Scene
 
         this.proximityDialogue.nameText.setText(`◆ ${character.name}`);
         this.proximityDialogue.bodyText.setText(scriptLines.join('\n'));
-        this.proximityDialogue.hintText.setText('Press A to connect voice');
+        this.proximityDialogue.hintText.setText('A voice | E dialogue | F scan');
         this.proximityDialogue.container.setVisible(true);
     }
 
@@ -428,6 +473,11 @@ export class Game extends Scene
     }
 
     checkCharacterInteraction() {
+        if (this.playerDead) {
+            this.hideProximityDialogue();
+            return;
+        }
+
         const nearbyCharacter = this.getNearestCharacterInRange();
 
         if (nearbyCharacter && !this.dialogueBox.isVisible()) {
@@ -449,12 +499,14 @@ export class Game extends Scene
             return;
         }
 
-        if (
-            Phaser.Input.Keyboard.JustDown(this.connectKey) ||
-            Phaser.Input.Keyboard.JustDown(this.interactKey)
-        ) {
+        if (Phaser.Input.Keyboard.JustDown(this.connectKey)) {
             this.hideProximityDialogue();
             this.connectVoiceForCharacter(nearbyCharacter);
+        }
+
+        if (Phaser.Input.Keyboard.JustDown(this.interactKey)) {
+            this.hideProximityDialogue();
+            this.openDialogueChoice(nearbyCharacter);
         }
 
         if (this.voiceConnectedCharacterId === nearbyCharacter.id) {
@@ -546,6 +598,480 @@ export class Game extends Scene
         this.voiceStatusText.setDepth(46).setScrollFactor(0).setVisible(false);
     }
 
+    createEventPanel() {
+        this.eventText = this.add.text(this.cameras.main.width / 2, 42, '', {
+            font: '13px monospace',
+            fill: '#ffe6a6',
+            backgroundColor: '#34260f',
+            padding: { x: 10, y: 4 }
+        })
+            .setScrollFactor(0)
+            .setDepth(65)
+            .setOrigin(0.5, 0)
+            .setVisible(false);
+    }
+
+    createHudPanel() {
+        this.hudText = this.add.text(18, 52, '', {
+            font: '12px monospace',
+            fill: '#d9f0ff',
+            backgroundColor: '#0b1420',
+            padding: { x: 8, y: 6 },
+            lineSpacing: 3
+        })
+            .setScrollFactor(0)
+            .setDepth(58);
+    }
+
+    createClueBoardPanel() {
+        const panel = this.add.container(0, 0).setDepth(62).setScrollFactor(0).setVisible(false);
+        const bg = this.add.rectangle(512, 384, 700, 520, 0x101923, 0.96).setStrokeStyle(2, 0x7fb4e6, 1);
+        const title = this.add.text(190, 145, 'CLUE BOARD [TAB]', {
+            font: '16px monospace',
+            color: '#b9e2ff'
+        });
+        const body = this.add.text(190, 180, '', {
+            font: '13px monospace',
+            color: '#ffffff',
+            wordWrap: { width: 640 },
+            lineSpacing: 4
+        });
+        panel.add([bg, title, body]);
+        this.clueBoardPanel = { panel, body };
+    }
+
+    createProfilePanel() {
+        const panel = this.add.container(0, 0).setDepth(62).setScrollFactor(0).setVisible(false);
+        const bg = this.add.rectangle(780, 260, 430, 290, 0x131a26, 0.97).setStrokeStyle(2, 0x6db2e5, 1);
+        const title = this.add.text(580, 130, 'PROFILE [P]', {
+            font: '15px monospace',
+            color: '#d4edff'
+        });
+        const body = this.add.text(580, 160, '', {
+            font: '12px monospace',
+            color: '#ffffff',
+            wordWrap: { width: 380 },
+            lineSpacing: 4
+        });
+        panel.add([bg, title, body]);
+        this.profilePanel = { panel, body };
+    }
+
+    createChoicePanel() {
+        const panel = this.add.container(0, 0).setDepth(64).setScrollFactor(0).setVisible(false);
+        const bg = this.add.rectangle(512, 664, 960, 178, 0x090f15, 0.97).setStrokeStyle(2, 0x8bc1ef, 1);
+        const title = this.add.text(46, 590, 'DIALOGUE INTENT', {
+            font: '14px monospace',
+            color: '#9ed7ff'
+        });
+        const body = this.add.text(46, 616, '', {
+            font: '13px monospace',
+            color: '#ffffff',
+            wordWrap: { width: 920 },
+            lineSpacing: 4
+        });
+
+        panel.add([bg, title, body]);
+        this.choicePanel = { panel, title, body };
+    }
+
+    createVignette() {
+        this.vignette = this.add.rectangle(512, 384, 1024, 768, 0x000000, 0)
+            .setDepth(59)
+            .setScrollFactor(0)
+            .setBlendMode(Phaser.BlendModes.MULTIPLY);
+    }
+
+    createEnvironmentClues() {
+        const clueDefs = [
+            { id: 'tape_fragment', label: 'Tape Fragment', x: 560, y: 260 },
+            { id: 'order_manifest', label: 'Order Manifest', x: 1020, y: 560 },
+            { id: 'core_checksum', label: 'Core Checksum', x: 300, y: 1020 },
+        ];
+
+        this.environmentClues = clueDefs.map((def) => {
+            const marker = this.add.text(def.x, def.y - 20, '!', {
+                font: '18px monospace',
+                color: '#ffd67d',
+                backgroundColor: '#2d1f09',
+                padding: { x: 4, y: 2 }
+            }).setOrigin(0.5).setDepth(26);
+
+            return {
+                ...def,
+                marker,
+                collected: this.incidentManager.collectedPhysical.has(def.id),
+            };
+        });
+
+        this.environmentClues.forEach((clue) => {
+            clue.marker.setVisible(!clue.collected);
+        });
+    }
+
+    createPatrols(worldLayer) {
+        const patrolDefs = [
+            {
+                id: 'patrol_alpha',
+                waypoints: [
+                    { x: 860, y: 260 },
+                    { x: 1120, y: 260 },
+                    { x: 1120, y: 540 },
+                    { x: 860, y: 540 }
+                ]
+            },
+            {
+                id: 'patrol_beta',
+                waypoints: [
+                    { x: 260, y: 760 },
+                    { x: 520, y: 760 },
+                    { x: 520, y: 1080 },
+                    { x: 260, y: 1080 }
+                ]
+            }
+        ];
+
+        this.patrols = patrolDefs.map((def) => {
+            const sprite = this.physics.add.sprite(def.waypoints[0].x, def.waypoints[0].y, 'paul', 'paul-front');
+            sprite.setSize(30, 40).setOffset(0, 0);
+            this.physics.add.collider(sprite, worldLayer);
+            this.physics.add.collider(this.player, sprite);
+
+            return {
+                id: def.id,
+                sprite,
+                waypoints: def.waypoints,
+                waypointIndex: 1,
+                speed: 52
+            };
+        });
+    }
+
+    scheduleInstitutionalEvent() {
+        if (this.eventTimer) {
+            this.eventTimer.remove(false);
+        }
+        const delay = Phaser.Math.Between(85000, 110000);
+        this.eventTimer = this.time.delayedCall(delay, () => {
+            this.startInstitutionalEvent();
+            this.scheduleInstitutionalEvent();
+        });
+    }
+
+    startInstitutionalEvent() {
+        const events = [
+            { id: 'lockdown', label: 'LOCKDOWN: movement reduced', durationMs: 22000 },
+            { id: 'blackout', label: 'BLACKOUT: stress climbs faster', durationMs: 22000 },
+            { id: 'purge', label: 'PURGE SWEEP: patrols intensified', durationMs: 22000 }
+        ];
+        this.currentEvent = Phaser.Utils.Array.GetRandom(events);
+        this.eventText.setText(this.currentEvent.label);
+        this.eventText.setVisible(true);
+        this.runState.addSuspicion(6);
+        ApiService.reportRunEvent({
+            event_type: this.currentEvent.id,
+            payload: { label: this.currentEvent.label }
+        }).catch(() => {});
+
+        if (this.eventEndTimer) {
+            this.eventEndTimer.remove(false);
+        }
+        this.eventEndTimer = this.time.delayedCall(this.currentEvent.durationMs, () => {
+            this.currentEvent = null;
+            this.eventText.setVisible(false);
+        });
+    }
+
+    updateHudPanel() {
+        if (!this.hudText) {
+            return;
+        }
+
+        const activeIncident = this.incidentManager.getActiveIncident();
+        const lines = [
+            `H:${Math.round(this.runState.state.health)}  S:${Math.round(this.runState.state.stress)}  Susp:${Math.round(this.runState.state.suspicion)}  T${this.runState.state.threatTier}`,
+            `XP:${this.runState.state.xp}  Resolved:${this.incidentManager.getResolvedCount()}/${this.incidentManager.incidents.length}`,
+            activeIncident ? `Objective: ${activeIncident.title}` : 'Objective: Reach Neuro-Core Decision Point',
+            `Controls: A Voice | E Dialogue | F Scan | TAB Clues | P Profile | K Save`
+        ];
+
+        this.hudText.setText(lines.join('\n'));
+    }
+
+    refreshClueBoardText() {
+        if (!this.clueBoardPanel) {
+            return;
+        }
+
+        const clues = this.runState.state.clues;
+        const clueLines = clues.length > 0
+            ? clues.map((clue, index) => `${index + 1}. ${clue.title} [${clue.type}]`)
+            : ['No verified clues yet.'];
+
+        const incidentLines = this.incidentManager.incidents.map((incident) => {
+            const status = incident.resolved ? 'RESOLVED' : 'OPEN';
+            return `- ${incident.title}: ${status}`;
+        });
+
+        this.clueBoardPanel.body.setText([
+            'Incident Status',
+            ...incidentLines,
+            '',
+            'Verified Clues',
+            ...clueLines,
+            '',
+            'Press TAB to close'
+        ].join('\n'));
+    }
+
+    refreshProfileText() {
+        if (!this.profilePanel) {
+            return;
+        }
+
+        const factions = this.runState.state.factions;
+        this.profilePanel.body.setText([
+            `Subject: ${this.playerName}`,
+            `Health: ${Math.round(this.runState.state.health)}`,
+            `Stress: ${Math.round(this.runState.state.stress)}`,
+            `Suspicion: ${Math.round(this.runState.state.suspicion)}`,
+            `Threat Tier: ${this.runState.state.threatTier}`,
+            `XP: ${this.runState.state.xp}`,
+            '',
+            'Faction Pulse',
+            `Staff Echoes: ${factions.staff_echoes}`,
+            `Patients: ${factions.patients}`,
+            `Core System: ${factions.core_system}`,
+            '',
+            `Runtime: ${Math.floor(this.runState.state.timeSeconds)}s`
+        ].join('\n'));
+    }
+
+    evaluateIncidentProgress() {
+        const resolved = this.incidentManager.resolveAvailableIncidents();
+        if (resolved.length === 0) {
+            return;
+        }
+
+        resolved.forEach((incident) => {
+            this.runState.addXp(40);
+            this.runState.addSuspicion(-8);
+            this.showVoiceStatus(`Incident resolved: ${incident.title}`, 'ok');
+        });
+
+        this.refreshClueBoardText();
+        this.saveRunState();
+
+        if (this.incidentManager.isRunComplete()) {
+            this.runState.state.runComplete = true;
+            this.eventText.setText('FINAL OBJECTIVE: Proceed to AI Core for end-state choice');
+            this.eventText.setVisible(true);
+        }
+    }
+
+    openDialogueChoice(character) {
+        if (!this.choicePanel || this.choiceContext) {
+            return;
+        }
+
+        this.choiceContext = { character };
+        this.choicePanel.body.setText([
+            `${character.name} is waiting. Choose an intent:`,
+            '[1] Calm: build trust, low risk',
+            '[2] Assertive: faster truth, moderate suspicion',
+            '[3] Deceptive: high gain, high risk'
+        ].join('\n'));
+        this.choicePanel.panel.setVisible(true);
+    }
+
+    applyDialogueChoice(intent) {
+        if (!this.choiceContext) {
+            return;
+        }
+
+        const { character } = this.choiceContext;
+        const npcState = this.runState.state.npcState[character.id] || { trust: 0, fear: 0, hostility: 0, knowledgeFlags: [] };
+
+        const effects = {
+            calm: { trust: 8, fear: -4, suspicion: -3, stress: -2, chance: 0.55 },
+            assertive: { trust: 2, fear: 6, suspicion: 5, stress: 3, chance: 0.7 },
+            deceptive: { trust: -7, fear: 10, suspicion: 11, stress: 8, chance: 0.88 },
+        };
+        const effect = effects[intent];
+
+        this.runState.setNpcState(character.id, {
+            trust: (npcState.trust || 0) + effect.trust,
+            fear: (npcState.fear || 0) + effect.fear,
+            hostility: Math.max(0, (npcState.hostility || 0) + (intent === 'deceptive' ? 8 : 0)),
+            knowledgeFlags: npcState.knowledgeFlags || []
+        });
+        this.runState.addSuspicion(effect.suspicion);
+        this.runState.addStress(effect.stress);
+
+        const roll = Math.random();
+        const gainedTestimony = roll <= effect.chance;
+        if (gainedTestimony) {
+            const clueId = `testimony_${character.id}`;
+            const added = this.runState.addClue({
+                id: clueId,
+                title: `${character.name} testimony`,
+                type: 'testimony',
+                source: character.id
+            });
+
+            if (added) {
+                this.incidentManager.registerTestimony(character.id);
+                this.runState.addXp(18);
+            }
+        } else {
+            this.runState.addSuspicion(5);
+        }
+
+        if (character.id === 'ai_core') {
+            this.runState.setFactionDelta('core_system', intent === 'calm' ? 4 : -6);
+        } else {
+            this.runState.setFactionDelta('patients', intent === 'calm' ? 3 : -2);
+        }
+
+        ApiService.reportDialogueOutcome({
+            character_id: character.id,
+            intent,
+            trust_delta: effect.trust,
+            suspicion_delta: effect.suspicion,
+            stress_delta: effect.stress
+        }).catch(() => {});
+
+        this.showVoiceStatus(
+            gainedTestimony ? `${character.name} shared usable testimony.` : `${character.name} withheld key details.`,
+            gainedTestimony ? 'ok' : 'error'
+        );
+
+        this.choicePanel.panel.setVisible(false);
+        this.choiceContext = null;
+        this.refreshClueBoardText();
+        this.refreshProfileText();
+        this.evaluateIncidentProgress();
+    }
+
+    scanNearbyEnvironmentClue() {
+        const nearby = this.environmentClues.find((clue) => {
+            if (clue.collected) {
+                return false;
+            }
+            return Phaser.Math.Distance.Between(this.player.x, this.player.y, clue.x, clue.y) < 70;
+        });
+
+        if (!nearby) {
+            this.showVoiceStatus('No physical clue in range.', 'neutral');
+            return;
+        }
+
+        nearby.collected = true;
+        nearby.marker.setVisible(false);
+
+        this.runState.addClue({
+            id: nearby.id,
+            title: nearby.label,
+            type: 'physical',
+            source: 'environment'
+        });
+        this.incidentManager.registerPhysicalClue(nearby.id);
+        this.runState.addXp(24);
+        this.runState.addStress(2);
+
+        this.showVoiceStatus(`Collected: ${nearby.label}`, 'ok');
+        ApiService.reportClueResolve({
+            clue_id: nearby.id,
+            clue_type: 'physical',
+            source: 'environment'
+        }).catch(() => {});
+        this.refreshClueBoardText();
+        this.refreshProfileText();
+        this.evaluateIncidentProgress();
+    }
+
+    updatePatrols(delta) {
+        if (this.playerDead || this.patrols.length === 0) {
+            return;
+        }
+
+        const speedMultiplier = this.currentEvent?.id === 'purge' ? 1.35 : 1;
+        const now = this.time.now;
+
+        this.patrols.forEach((patrol) => {
+            const target = patrol.waypoints[patrol.waypointIndex];
+            const distance = Phaser.Math.Distance.Between(patrol.sprite.x, patrol.sprite.y, target.x, target.y);
+            if (distance < 6) {
+                patrol.waypointIndex = (patrol.waypointIndex + 1) % patrol.waypoints.length;
+                return;
+            }
+
+            const angle = Phaser.Math.Angle.Between(patrol.sprite.x, patrol.sprite.y, target.x, target.y);
+            this.physics.velocityFromRotation(angle, patrol.speed * speedMultiplier, patrol.sprite.body.velocity);
+
+            if (Math.abs(patrol.sprite.body.velocity.x) > Math.abs(patrol.sprite.body.velocity.y)) {
+                patrol.sprite.setTexture('paul', patrol.sprite.body.velocity.x > 0 ? 'paul-right' : 'paul-left');
+            } else {
+                patrol.sprite.setTexture('paul', patrol.sprite.body.velocity.y > 0 ? 'paul-front' : 'paul-back');
+            }
+
+            const playerDistance = Phaser.Math.Distance.Between(patrol.sprite.x, patrol.sprite.y, this.player.x, this.player.y);
+            if (playerDistance < 130) {
+                this.runState.addSuspicion(0.07 * (delta / 16.67));
+                if (playerDistance < 72 && now - this.lastPatrolDamageTime > 1600) {
+                    const damageBoost = this.runState.state.stress >= 65 ? 1.15 : 1;
+                    this.runState.applyDamage(7 * damageBoost);
+                    this.runState.addStress(5);
+                    this.lastPatrolDamageTime = now;
+                    this.cameras.main.shake(160, 0.0035);
+                    this.showVoiceStatus('Patrol contact! Health compromised.', 'error');
+                }
+            }
+        });
+    }
+
+    applyPassiveSystemEffects(delta) {
+        if (this.playerDead) {
+            return;
+        }
+
+        const seconds = delta / 1000;
+        this.runState.tick(seconds);
+
+        const eventStressRate = this.currentEvent?.id === 'blackout' ? 1.8 : 0.7;
+        const suspicionStressRate = this.runState.state.suspicion > 45 ? 0.5 : 0.2;
+        this.runState.addStress((eventStressRate + suspicionStressRate) * seconds);
+
+        if (this.runState.state.stress >= 85) {
+            this.runState.applyDamage(0.6 * seconds);
+        }
+
+        const vignetteAlpha = Phaser.Math.Clamp(this.runState.state.stress / 260, 0, 0.38);
+        if (this.vignette) {
+            this.vignette.setAlpha(vignetteAlpha);
+        }
+
+        if (this.runState.state.health <= 0 && !this.playerDead) {
+            this.playerDead = true;
+            this.eventText.setText('RUN FAILED: Subject collapse. Press LOGOUT to restart.');
+            this.eventText.setVisible(true);
+            this.showVoiceStatus('Health depleted. Investigation failed.', 'error');
+            this.saveRunState();
+        }
+    }
+
+    saveRunState() {
+        const payload = {
+            runState: this.runState.toJSON(),
+            incidentState: this.incidentManager.toJSON()
+        };
+        SaveService.save(this.playerName, payload, 1);
+        ApiService.saveSlot(1, {
+            playerName: this.playerName,
+            ...payload
+        }).catch(() => {});
+    }
+
     createTopBarUi() {
         const { width } = this.scale;
 
@@ -614,6 +1140,13 @@ export class Game extends Scene
 
     handleSceneShutdown() {
         this.disconnectVoice();
+        this.saveRunState();
+        if (this.eventTimer) {
+            this.eventTimer.remove(false);
+        }
+        if (this.eventEndTimer) {
+            this.eventEndTimer.remove(false);
+        }
     }
 
     updateNpcDistancePanel() {
@@ -677,7 +1210,12 @@ export class Game extends Scene
         this.labelsVisible = true;
 
         this.input.keyboard.on('keydown-ESC', () => {
-            if (!this.dialogueBox.isVisible()) {
+            const hasOverlayOpen =
+                Boolean(this.choiceContext) ||
+                (this.clueBoardPanel && this.clueBoardPanel.panel.visible) ||
+                (this.profilePanel && this.profilePanel.panel.visible);
+
+            if (!this.dialogueBox.isVisible() && !hasOverlayOpen) {
                 this.scene.pause();
                 this.scene.launch('PauseMenu');
             }
@@ -704,19 +1242,83 @@ export class Game extends Scene
 
         this.interactKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
         this.connectKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A);
+        this.scanKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
+        this.clueBoardKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TAB);
+        this.profileKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+        this.saveKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.K);
+        this.choiceKey1 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE);
+        this.choiceKey2 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TWO);
+        this.choiceKey3 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.THREE);
+        this.choiceCancelKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
 
         this.dialogueManager = new DialogueManager(this);
         this.dialogueManager.initialize(this.dialogueBox);
     }
 
-    update(time, delta) {
-        const isInDialogue = this.dialogueBox.isVisible();
+    handleMetaInputs() {
+        if (Phaser.Input.Keyboard.JustDown(this.scanKey)) {
+            this.scanNearbyEnvironmentClue();
+        }
 
-        if (!isInDialogue) {
+        if (Phaser.Input.Keyboard.JustDown(this.clueBoardKey) && this.clueBoardPanel) {
+            const nextVisible = !this.clueBoardPanel.panel.visible;
+            this.clueBoardPanel.panel.setVisible(nextVisible);
+            if (nextVisible) {
+                this.refreshClueBoardText();
+            }
+        }
+
+        if (Phaser.Input.Keyboard.JustDown(this.profileKey) && this.profilePanel) {
+            const nextVisible = !this.profilePanel.panel.visible;
+            this.profilePanel.panel.setVisible(nextVisible);
+            if (nextVisible) {
+                this.refreshProfileText();
+            }
+        }
+
+        if (Phaser.Input.Keyboard.JustDown(this.saveKey)) {
+            this.saveRunState();
+            this.showVoiceStatus('Manual save complete (slot 1).', 'ok');
+        }
+
+        if (Phaser.Input.Keyboard.JustDown(this.choiceCancelKey)) {
+            if (this.clueBoardPanel && this.clueBoardPanel.panel.visible) {
+                this.clueBoardPanel.panel.setVisible(false);
+            } else if (this.profilePanel && this.profilePanel.panel.visible) {
+                this.profilePanel.panel.setVisible(false);
+            }
+        }
+    }
+
+    handleChoiceInputs() {
+        if (!this.choiceContext) {
+            return;
+        }
+
+        if (Phaser.Input.Keyboard.JustDown(this.choiceKey1)) {
+            this.applyDialogueChoice('calm');
+        } else if (Phaser.Input.Keyboard.JustDown(this.choiceKey2)) {
+            this.applyDialogueChoice('assertive');
+        } else if (Phaser.Input.Keyboard.JustDown(this.choiceKey3)) {
+            this.applyDialogueChoice('deceptive');
+        } else if (Phaser.Input.Keyboard.JustDown(this.choiceCancelKey)) {
+            this.choicePanel.panel.setVisible(false);
+            this.choiceContext = null;
+        }
+    }
+
+    update(time, delta) {
+        const isInDialogue = this.dialogueBox.isVisible() || Boolean(this.choiceContext);
+
+        if (!isInDialogue && !this.playerDead) {
             this.updatePlayerMovement();
         }
 
         this.checkCharacterInteraction();
+        this.handleMetaInputs();
+        this.handleChoiceInputs();
+        this.updatePatrols(delta);
+        this.applyPassiveSystemEffects(delta);
 
         this.characters.forEach(character => {
             character.update(this.player, isInDialogue);
@@ -724,6 +1326,13 @@ export class Game extends Scene
 
         this.updatePlayerNameLabelPosition();
         this.updateNpcDistancePanel();
+        this.updateHudPanel();
+        this.refreshProfileText();
+
+        if (time >= this.nextAutoSaveAt) {
+            this.saveRunState();
+            this.nextAutoSaveAt = time + 30000;
+        }
 
         if (this.controls) {
             this.controls.update(delta);
@@ -731,7 +1340,13 @@ export class Game extends Scene
     }
 
     updatePlayerMovement() {
-        const speed = 175;
+        let speed = 175;
+        if (this.runState.state.health < 40) {
+            speed -= 28;
+        }
+        if (this.currentEvent?.id === 'lockdown') {
+            speed *= 0.78;
+        }
         const prevVelocity = this.player.body.velocity.clone();
         this.player.body.setVelocity(0);
 

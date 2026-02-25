@@ -159,8 +159,8 @@ export class MainMenu extends Scene {
         
         const instructions = [
             'Arrow keys for moving',
-            'A (or E) near entity to connect voice',
-            'ESC for closing the dialogue'
+            'A voice connect, E dialogue intent, F scan clue',
+            'TAB clue board, P profile, K quick save'
         ];
         
         const textElements = [];
