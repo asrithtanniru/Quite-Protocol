@@ -1,10 +1,17 @@
 import opik
+import os
 from loguru import logger
 
 
 class Prompt:
     def __init__(self, name: str, prompt: str) -> None:
         self.name = name
+
+        comet_api_key = os.getenv("COMET_API_KEY", "").strip()
+        comet_project = os.getenv("COMET_PROJECT", "").strip()
+        if not comet_api_key or not comet_project:
+            self.__prompt = prompt
+            return
 
         try:
             self.__prompt = opik.Prompt(name=name, prompt=prompt)

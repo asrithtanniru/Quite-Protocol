@@ -35,6 +35,7 @@
         "webpack-merge": "^5.10.0"
     },
     "dependencies": {
+        "livekit-client": "^2.17.2",
         "phaser": "^3.88.2"
     }
 }

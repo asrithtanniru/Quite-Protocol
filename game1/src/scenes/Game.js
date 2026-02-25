@@ -2,6 +2,7 @@ import { Scene } from 'phaser';
 import Character from '../classes/Character';
 import DialogueBox from '../classes/DialogueBox';
 import DialogueManager from '../classes/DialogueManager';
+import VoiceChatService from '../services/VoiceChatService';
 
 export class Game extends Scene
 {
@@ -18,12 +19,16 @@ export class Game extends Scene
         this.dialogueManager = null;
         this.characters = [];
         this.labelsVisible = true;
-        this.interactedCharacterIds = new Set();
         this.npcDistanceText = null;
-        this.accessNoticeText = null;
-        this.accessNoticeTimer = null;
         this.proximityDialogue = null;
         this.activeNearbyCharacterId = null;
+        this.voiceStatusText = null;
+        this.voiceStatusTimer = null;
+        this.connectKey = null;
+        this.voiceConnectedCharacterId = null;
+        this.menuButton = null;
+        this.logoutButton = null;
+        this.menuPanel = null;
     }
 
     init (data)
@@ -47,7 +52,10 @@ export class Game extends Scene
         this.setupDialogueSystem();
         this.createProximityDialogue();
         this.createNpcDistancePanel();
-        this.createAccessNoticePanel();
+        this.createVoiceStatusPanel();
+        this.createTopBarUi();
+
+        this.events.on('shutdown', this.handleSceneShutdown, this);
     }
 
     createCharacters(layers) {
@@ -55,6 +63,7 @@ export class Game extends Scene
             {
                 id: 'mira_sanyal',
                 name: 'Dr. Mira Sanyal',
+                backendToken: 'hospital1',
                 spawnPoint: { x: 220, y: 180 },
                 spriteAtlas: 'socrates',
                 spriteFramePrefix: 'socrates',
@@ -70,6 +79,7 @@ export class Game extends Scene
             {
                 id: 'raghav_204',
                 name: 'Raghav (Room 204)',
+                backendToken: 'hospital2',
                 spawnPoint: { x: 980, y: 220 },
                 spriteAtlas: 'plato',
                 spriteFramePrefix: 'plato',
@@ -85,13 +95,13 @@ export class Game extends Scene
             {
                 id: 'meera_kapoor',
                 name: 'Meera Kapoor',
+                backendToken: 'hospital3',
                 spawnPoint: { x: 260, y: 920 },
                 spriteAtlas: 'aristotle',
                 spriteFramePrefix: 'aristotle',
                 defaultDirection: 'right',
                 roamRadius: 170,
                 interactionDistance: 70,
-                requiredContacts: 1,
                 proximityScript: [
                     'Meera whispers from the corner, tears glitching into black streaks.',
                     '"Please... do not leave me in this loop again."'
@@ -101,13 +111,13 @@ export class Game extends Scene
             {
                 id: 'janitor_fragment',
                 name: 'The Janitor',
+                backendToken: 'hospital7',
                 spawnPoint: { x: 1040, y: 1000 },
                 spriteAtlas: 'descartes',
                 spriteFramePrefix: 'descartes',
                 defaultDirection: 'front',
                 roamRadius: 130,
                 interactionDistance: 60,
-                requiredContacts: 2,
                 proximityScript: [
                     'Metal scraping echoes before the Janitor appears beside you.',
                     '"You are early, Subject. The building already knows your fear."'
@@ -117,13 +127,13 @@ export class Game extends Scene
             {
                 id: 'ai_core',
                 name: 'AI Core',
+                backendToken: 'ai1',
                 spawnPoint: { x: 630, y: 620 },
                 spriteAtlas: 'dennett',
                 spriteFramePrefix: 'dennett',
                 defaultDirection: 'front',
                 roamRadius: 90,
                 interactionDistance: 95,
-                requiredCharacterIds: ['mira_sanyal', 'raghav_204', 'meera_kapoor', 'janitor_fragment'],
                 proximityScript: [
                     'The PA crackles. A synthetic voice overlays your heartbeat.',
                     `"Subject ${this.playerName}: preservation pathway available."`
@@ -133,6 +143,7 @@ export class Game extends Scene
             {
                 id: 'archive_nurse',
                 name: 'Archive Nurse',
+                backendToken: 'hospital4',
                 spawnPoint: { x: 540, y: 180 },
                 spriteAtlas: 'ada_lovelace',
                 spriteFramePrefix: 'ada_lovelace',
@@ -148,13 +159,13 @@ export class Game extends Scene
             {
                 id: 'subject_nila',
                 name: 'Subject Nila-12',
+                backendToken: 'hospital5',
                 spawnPoint: { x: 1160, y: 430 },
                 spriteAtlas: 'turing',
                 spriteFramePrefix: 'turing',
                 defaultDirection: 'front',
                 roamRadius: 120,
                 interactionDistance: 72,
-                requiredContacts: 1,
                 proximityScript: [
                     'Nila speaks as if finishing a sentence from another timeline.',
                     '"The core keeps replaying futures that never happened."'
@@ -164,13 +175,13 @@ export class Game extends Scene
             {
                 id: 'subject_kabir',
                 name: 'Subject Kabir-31',
+                backendToken: 'hospital6',
                 spawnPoint: { x: 140, y: 610 },
                 spriteAtlas: 'leibniz',
                 spriteFramePrefix: 'leibniz',
                 defaultDirection: 'front',
                 roamRadius: 110,
                 interactionDistance: 66,
-                requiredCharacterIds: ['raghav_204'],
                 proximityScript: [
                     'Kabir traces route markers on the floor tiles.',
                     '"Room 14-B still stores neural backups. Take the red corridor carefully."'
@@ -180,13 +191,13 @@ export class Game extends Scene
             {
                 id: 'orderly_omkar',
                 name: 'Orderly Omkar',
+                backendToken: 'env1',
                 spawnPoint: { x: 820, y: 840 },
                 spriteAtlas: 'searle',
                 spriteFramePrefix: 'searle',
                 defaultDirection: 'front',
                 roamRadius: 100,
                 interactionDistance: 58,
-                requiredContacts: 3,
                 proximityScript: [
                     'Omkar keeps his eyes on the surveillance lamps.',
                     '"Bodies stayed. Minds were archived. That was the real transfer."'
@@ -196,13 +207,13 @@ export class Game extends Scene
             {
                 id: 'warden_node',
                 name: 'Warden Node',
+                backendToken: 'police1',
                 spawnPoint: { x: 430, y: 1080 },
                 spriteAtlas: 'chomsky',
                 spriteFramePrefix: 'chomsky',
                 defaultDirection: 'front',
                 roamRadius: 95,
                 interactionDistance: 80,
-                requiredCharacterIds: ['orderly_omkar', 'subject_nila'],
                 proximityScript: [
                     'A containment terminal projects a humanoid guard silhouette.',
                     '"Authorization incomplete. Escalate to core protocol."'
@@ -212,13 +223,13 @@ export class Game extends Scene
             {
                 id: 'echo_child',
                 name: 'Echo Child',
+                backendToken: 'common3',
                 spawnPoint: { x: 670, y: 340 },
                 spriteAtlas: 'miguel',
                 spriteFramePrefix: 'miguel',
                 defaultDirection: 'front',
                 roamRadius: 125,
                 interactionDistance: 74,
-                requiredContacts: 2,
                 proximityScript: [
                     'A child-shaped echo flickers at the edge of the corridor light.',
                     '"I am what stayed after the scream was archived."'
@@ -247,9 +258,9 @@ export class Game extends Scene
             });
 
             character.interactionDistance = config.interactionDistance || 55;
-            character.requiredContacts = config.requiredContacts || 0;
-            character.requiredCharacterIds = config.requiredCharacterIds || [];
             character.proximityScript = config.proximityScript || [];
+            character.backendToken = config.backendToken || config.id;
+            character.voiceRoomName = `quiet-protocol-${character.id}`;
 
             this.characters.push(character);
         });
@@ -266,48 +277,72 @@ export class Game extends Scene
         }
     }
 
-    getCharacterAccessState(character) {
-        const missingCharacterIds = character.requiredCharacterIds
-            .filter((requiredId) => !this.interactedCharacterIds.has(requiredId));
-
-        if (missingCharacterIds.length > 0) {
-            const missingNames = this.characters
-                .filter((candidate) => missingCharacterIds.includes(candidate.id))
-                .map((candidate) => candidate.name)
-                .join(', ');
-            return {
-                allowed: false,
-                reason: `Talk to: ${missingNames}`
-            };
-        }
-
-        if (this.interactedCharacterIds.size < character.requiredContacts) {
-            return {
-                allowed: false,
-                reason: `Need ${character.requiredContacts} unlocked contacts (current: ${this.interactedCharacterIds.size})`
-            };
-        }
-
-        return { allowed: true, reason: '' };
-    }
-
-    showAccessNotice(message) {
-        if (!this.accessNoticeText) {
+    showVoiceStatus(message, tone = 'neutral') {
+        if (!this.voiceStatusText) {
             return;
         }
 
-        this.accessNoticeText.setText(message);
-        this.accessNoticeText.setVisible(true);
+        const styleMap = {
+            neutral: { fill: '#dff6ff', backgroundColor: '#132230' },
+            ok: { fill: '#c9ffd8', backgroundColor: '#0f2f1f' },
+            error: { fill: '#ffdbdb', backgroundColor: '#3a1414' }
+        };
+        const style = styleMap[tone] || styleMap.neutral;
 
-        if (this.accessNoticeTimer) {
-            this.accessNoticeTimer.remove(false);
+        this.voiceStatusText.setStyle({
+            font: '12px monospace',
+            fill: style.fill,
+            backgroundColor: style.backgroundColor,
+            padding: { x: 8, y: 4 }
+        });
+        this.voiceStatusText.setText(message);
+        this.voiceStatusText.setVisible(true);
+
+        if (this.voiceStatusTimer) {
+            this.voiceStatusTimer.remove(false);
         }
 
-        this.accessNoticeTimer = this.time.delayedCall(2200, () => {
-            if (this.accessNoticeText) {
-                this.accessNoticeText.setVisible(false);
+        this.voiceStatusTimer = this.time.delayedCall(2200, () => {
+            if (this.voiceStatusText) {
+                this.voiceStatusText.setVisible(false);
             }
         });
+    }
+
+    async connectVoiceForCharacter(character) {
+        try {
+            this.showVoiceStatus(`Connecting voice: ${character.name}...`, 'neutral');
+            await VoiceChatService.connectToCharacter({
+                roomName: character.voiceRoomName,
+                characterId: character.backendToken,
+                playerName: this.playerName
+            });
+            this.voiceConnectedCharacterId = character.id;
+            this.showVoiceStatus(`Connected: ${character.name}`, 'ok');
+        } catch (error) {
+            console.error('Voice connection failed', error);
+            this.voiceConnectedCharacterId = null;
+            this.showVoiceStatus(`Voice connect failed: ${error.message}`, 'error');
+        }
+    }
+
+    async disconnectVoice(reason = '') {
+        if (!VoiceChatService.isConnected) {
+            this.voiceConnectedCharacterId = null;
+            return;
+        }
+
+        this.voiceConnectedCharacterId = null;
+
+        try {
+            await VoiceChatService.disconnect();
+        } catch (error) {
+            console.warn('Voice disconnect error', error);
+        } finally {
+            if (reason) {
+                this.showVoiceStatus(reason, 'neutral');
+            }
+        }
     }
 
     getNearestCharacterInRange() {
@@ -356,7 +391,7 @@ export class Game extends Scene
             lineSpacing: 5
         });
 
-        const hintText = this.add.text(boxX + boxWidth - 12, boxY + boxHeight - 8, 'Press E to talk', {
+        const hintText = this.add.text(boxX + boxWidth - 12, boxY + boxHeight - 8, 'Press A to connect voice', {
             font: '12px monospace',
             color: '#ffd28f'
         }).setOrigin(1, 1);
@@ -376,14 +411,13 @@ export class Game extends Scene
             return;
         }
 
-        const accessState = this.getCharacterAccessState(character);
         const scriptLines = character.proximityScript.length > 0
             ? character.proximityScript
             : [character.defaultMessage];
 
         this.proximityDialogue.nameText.setText(`◆ ${character.name}`);
         this.proximityDialogue.bodyText.setText(scriptLines.join('\n'));
-        this.proximityDialogue.hintText.setText(accessState.allowed ? 'Press E to talk' : 'Press E to attempt contact');
+        this.proximityDialogue.hintText.setText('Press A to connect voice');
         this.proximityDialogue.container.setVisible(true);
     }
 
@@ -409,32 +443,21 @@ export class Game extends Scene
         }
 
         if (!nearbyCharacter) {
-            if (this.dialogueBox.isVisible()) {
-                this.dialogueManager.closeDialogue();
+            if (this.voiceConnectedCharacterId) {
+                this.disconnectVoice('Voice disconnected: moved away from character');
             }
             return;
         }
 
-        if (Phaser.Input.Keyboard.JustDown(this.interactKey)) {
-            if (this.dialogueBox.isVisible()) {
-                if (!this.dialogueManager.isTyping) {
-                    this.dialogueManager.continueDialogue();
-                }
-                return;
-            }
-
-            const accessState = this.getCharacterAccessState(nearbyCharacter);
-            if (!accessState.allowed) {
-                this.showAccessNotice(`[ACCESS BLOCKED] ${nearbyCharacter.name} :: ${accessState.reason}`);
-                return;
-            }
-
-            this.interactedCharacterIds.add(nearbyCharacter.id);
+        if (
+            Phaser.Input.Keyboard.JustDown(this.connectKey) ||
+            Phaser.Input.Keyboard.JustDown(this.interactKey)
+        ) {
             this.hideProximityDialogue();
-            this.dialogueManager.startDialogue(nearbyCharacter);
+            this.connectVoiceForCharacter(nearbyCharacter);
         }
 
-        if (this.dialogueBox.isVisible()) {
+        if (this.voiceConnectedCharacterId === nearbyCharacter.id) {
             nearbyCharacter.facePlayer(this.player);
         }
     }
@@ -513,14 +536,84 @@ export class Game extends Scene
         this.npcDistanceText.setDepth(40).setScrollFactor(0);
     }
 
-    createAccessNoticePanel() {
-        this.accessNoticeText = this.add.text(20, this.cameras.main.height - 36, '', {
+    createVoiceStatusPanel() {
+        this.voiceStatusText = this.add.text(20, this.cameras.main.height - 36, '', {
             font: '12px monospace',
-            fill: '#ffcccc',
-            backgroundColor: '#331111',
+            fill: '#dff6ff',
+            backgroundColor: '#132230',
             padding: { x: 8, y: 4 }
         });
-        this.accessNoticeText.setDepth(46).setScrollFactor(0).setVisible(false);
+        this.voiceStatusText.setDepth(46).setScrollFactor(0).setVisible(false);
+    }
+
+    createTopBarUi() {
+        const { width } = this.scale;
+
+        this.menuButton = this.add.text(14, 12, '|||', {
+            font: '20px monospace',
+            color: '#d7ecff',
+            backgroundColor: '#0c1a2a',
+            padding: { x: 8, y: 2 }
+        })
+            .setScrollFactor(0)
+            .setDepth(60)
+            .setInteractive({ useHandCursor: true });
+
+        this.logoutButton = this.add.text(width - 14, 12, 'LOGOUT', {
+            font: '12px monospace',
+            color: '#ffd3d3',
+            backgroundColor: '#321414',
+            padding: { x: 8, y: 5 }
+        })
+            .setOrigin(1, 0)
+            .setScrollFactor(0)
+            .setDepth(60)
+            .setInteractive({ useHandCursor: true });
+
+        this.menuPanel = this.add.container(0, 0).setDepth(61).setScrollFactor(0).setVisible(false);
+        const panelBg = this.add.rectangle(120, 84, 208, 122, 0x0c1a2a, 0.96).setStrokeStyle(2, 0x6bb0ff, 1);
+        const resumeBtn = this.add.text(36, 44, 'Resume', {
+            font: '13px monospace',
+            color: '#ffffff',
+            backgroundColor: '#1d3651',
+            padding: { x: 8, y: 5 }
+        }).setInteractive({ useHandCursor: true });
+        const disconnectBtn = this.add.text(36, 78, 'Disconnect Voice', {
+            font: '13px monospace',
+            color: '#ffffff',
+            backgroundColor: '#1d3651',
+            padding: { x: 8, y: 5 }
+        }).setInteractive({ useHandCursor: true });
+        const menuMainBtn = this.add.text(36, 112, 'Main Menu', {
+            font: '13px monospace',
+            color: '#ffffff',
+            backgroundColor: '#1d3651',
+            padding: { x: 8, y: 5 }
+        }).setInteractive({ useHandCursor: true });
+
+        this.menuPanel.add([panelBg, resumeBtn, disconnectBtn, menuMainBtn]);
+
+        this.menuButton.on('pointerdown', () => {
+            this.menuPanel.setVisible(!this.menuPanel.visible);
+        });
+        resumeBtn.on('pointerdown', () => this.menuPanel.setVisible(false));
+        disconnectBtn.on('pointerdown', () => {
+            this.disconnectVoice('Voice disconnected');
+            this.menuPanel.setVisible(false);
+        });
+        menuMainBtn.on('pointerdown', () => {
+            this.disconnectVoice();
+            this.menuPanel.setVisible(false);
+            this.scene.start('MainMenu');
+        });
+        this.logoutButton.on('pointerdown', () => {
+            this.disconnectVoice();
+            this.scene.start('MainMenu');
+        });
+    }
+
+    handleSceneShutdown() {
+        this.disconnectVoice();
     }
 
     updateNpcDistancePanel() {
@@ -610,6 +703,7 @@ export class Game extends Scene
             .setVisible(false);
 
         this.interactKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+        this.connectKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A);
 
         this.dialogueManager = new DialogueManager(this);
         this.dialogueManager.initialize(this.dialogueBox);

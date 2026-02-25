@@ -109,6 +109,16 @@ def _get_livekit_credentials() -> tuple[str, str]:
     return api_key, api_secret
 
 
+def _get_livekit_url() -> str:
+    livekit_url = os.getenv("LIVEKIT_URL", "").strip()
+    if not livekit_url:
+        raise HTTPException(
+            status_code=500,
+            detail="Missing LIVEKIT_URL in environment.",
+        )
+    return livekit_url
+
+
 def _build_join_token(
     *,
     room_name: str,
@@ -184,7 +194,7 @@ def create_livekit_token(payload: TokenRequest) -> dict[str, str]:
         token_builder = token_builder.with_metadata(payload.metadata)
 
     jwt_token = token_builder.to_jwt()
-    return {"token": jwt_token}
+    return {"token": jwt_token, "url": _get_livekit_url()}
 
 
 @token_router.post("/character/launch")
@@ -214,6 +224,7 @@ async def launch_character(payload: CharacterLaunchRequest) -> dict[str, Any]:
         "dispatch_id": dispatch.id,
         "agent_name": payload.agent_name,
         "character_token": character_token,
+        "url": _get_livekit_url(),
     }
 
     if payload.user_identity:

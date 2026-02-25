@@ -1,8 +1,8 @@
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Union
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
-from langgraph.checkpoint.mongodb.aio import AsyncMongoDBSaver
 from opik.integrations.langchain import OpikTracer
 
 from agents.application.conversation_service.workflow.graph import (
@@ -10,6 +10,31 @@ from agents.application.conversation_service.workflow.graph import (
 )
 from agents.application.conversation_service.workflow.state import PhilosopherState
 from agents.config import settings
+
+try:
+    from langgraph.checkpoint.mongodb.aio import AsyncMongoDBSaver  # type: ignore[attr-defined]
+except Exception:
+    try:
+        from langgraph.checkpoint.mongodb import (  # type: ignore[attr-defined]
+            AsyncMongoDBSaver,
+        )
+    except Exception:
+        AsyncMongoDBSaver = None
+
+
+@asynccontextmanager
+async def _checkpointer_context():
+    if AsyncMongoDBSaver is None:
+        yield None
+        return
+
+    async with AsyncMongoDBSaver.from_conn_string(
+        conn_string=settings.MONGO_URI,
+        db_name=settings.MONGO_DB_NAME,
+        checkpoint_collection_name=settings.MONGO_STATE_CHECKPOINT_COLLECTION,
+        writes_collection_name=settings.MONGO_STATE_WRITES_COLLECTION,
+    ) as checkpointer:
+        yield checkpointer
 
 
 async def get_response(
@@ -43,12 +68,7 @@ async def get_response(
     graph_builder = create_workflow_graph()
 
     try:
-        async with AsyncMongoDBSaver.from_conn_string(
-            conn_string=settings.MONGO_URI,
-            db_name=settings.MONGO_DB_NAME,
-            checkpoint_collection_name=settings.MONGO_STATE_CHECKPOINT_COLLECTION,
-            writes_collection_name=settings.MONGO_STATE_WRITES_COLLECTION,
-        ) as checkpointer:
+        async with _checkpointer_context() as checkpointer:
             graph = graph_builder.compile(checkpointer=checkpointer)
             opik_tracer = OpikTracer(graph=graph.get_graph(xray=True))
 
@@ -104,12 +124,7 @@ async def get_streaming_response(
     graph_builder = create_workflow_graph()
 
     try:
-        async with AsyncMongoDBSaver.from_conn_string(
-            conn_string=settings.MONGO_URI,
-            db_name=settings.MONGO_DB_NAME,
-            checkpoint_collection_name=settings.MONGO_STATE_CHECKPOINT_COLLECTION,
-            writes_collection_name=settings.MONGO_STATE_WRITES_COLLECTION,
-        ) as checkpointer:
+        async with _checkpointer_context() as checkpointer:
             graph = graph_builder.compile(checkpointer=checkpointer)
             opik_tracer = OpikTracer(graph=graph.get_graph(xray=True))
 

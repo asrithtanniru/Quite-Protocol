@@ -1,0 +1,10 @@
+{
+  "name": "agents-backend-runner",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "api": "./scripts/start_api.sh",
+    "worker": "./scripts/start_worker.sh",
+    "start": "./scripts/start_all.sh"
+  }
+}

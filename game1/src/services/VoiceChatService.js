@@ -1,0 +1,199 @@
+import ApiService from './ApiService';
+
+class VoiceChatService {
+  constructor() {
+    this.room = null;
+    this.connected = false;
+    this.roomName = null;
+    this.activeCharacterId = null;
+    this.livekitClient = null;
+    this.remoteAudioElements = new Map();
+    this.livekitUrl = null;
+  }
+
+  get isConnected() {
+    return this.connected;
+  }
+
+  async loadLivekitClient() {
+    if (this.livekitClient) {
+      return this.livekitClient;
+    }
+
+    try {
+      const module = await import('livekit-client');
+      if (module && module.Room) {
+        this.livekitClient = module;
+        return this.livekitClient;
+      }
+    } catch (_) {
+      // Fallback to UMD loading if package import is unavailable in current setup.
+    }
+
+    if (window.LivekitClient || window.LiveKitClient) {
+      this.livekitClient = window.LivekitClient || window.LiveKitClient;
+      return this.livekitClient;
+    }
+
+    await this.injectLivekitScript();
+
+    if (window.LivekitClient || window.LiveKitClient) {
+      this.livekitClient = window.LivekitClient || window.LiveKitClient;
+      return this.livekitClient;
+    }
+
+    throw new Error('LiveKit client failed to load. Check internet/CDN access and refresh.');
+  }
+
+  async injectLivekitScript() {
+    const existing = document.querySelector('script[data-livekit-client="true"]');
+    if (existing) {
+      if (existing.dataset.loaded === 'true') return;
+      await new Promise((resolve, reject) => {
+        existing.addEventListener('load', () => resolve(), { once: true });
+        existing.addEventListener('error', () => reject(new Error('LiveKit UMD script failed to load')), { once: true });
+      });
+      return;
+    }
+
+    const candidateUrls = [
+      'https://unpkg.com/livekit-client@2.17.2/dist/livekit-client.umd.js',
+      'https://cdn.jsdelivr.net/npm/livekit-client@2.17.2/dist/livekit-client.umd.js',
+      'https://unpkg.com/livekit-client/dist/livekit-client.umd.js',
+    ];
+
+    let lastError = null;
+    for (const url of candidateUrls) {
+      try {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = url;
+          script.async = true;
+          script.dataset.livekitClient = 'true';
+          script.onload = () => {
+            script.dataset.loaded = 'true';
+            resolve();
+          };
+          script.onerror = () => reject(new Error(`LiveKit UMD script failed: ${url}`));
+          document.head.appendChild(script);
+        });
+
+        if (window.LivekitClient || window.LiveKitClient) {
+          return;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error('LiveKit UMD script failed to load');
+  }
+
+  async connectToCharacter({ roomName, characterId, playerName }) {
+    const lk = await this.loadLivekitClient();
+    const safePlayerName = playerName || 'Subject-0';
+    const identity = `subject-${safePlayerName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`;
+
+    if (this.connected && this.room && this.roomName === roomName) {
+      this.activeCharacterId = characterId;
+      await ApiService.switchCharacter({ roomName, characterToken: characterId });
+      await ApiService.setCharacterEngagement({
+        roomName,
+        engaged: true,
+        characterToken: characterId,
+      });
+      return;
+    }
+
+    if (this.connected) {
+      await this.disconnect();
+    }
+
+    const launchResponse = await ApiService.launchCharacterRoom({
+      roomName,
+      characterToken: characterId,
+      userIdentity: identity,
+      userName: safePlayerName,
+      replaceExistingDispatches: true,
+    });
+
+    const token = launchResponse.user_token;
+    const url = launchResponse.url || launchResponse.livekit_url || window.__LIVEKIT_URL__;
+    this.livekitUrl = url;
+
+    if (!url || !token) {
+      throw new Error('Missing LiveKit url/token from backend');
+    }
+
+    this.room = new lk.Room({
+      adaptiveStream: true,
+      dynacast: true,
+    });
+
+    this.room.on('trackSubscribed', (track) => {
+      if (track.kind !== 'audio') return;
+      const element = track.attach();
+      element.autoplay = true;
+      element.dataset.livekitAudio = 'true';
+      document.body.appendChild(element);
+      this.remoteAudioElements.set(track.sid, element);
+    });
+
+    this.room.on('trackUnsubscribed', (track) => {
+      if (track.kind !== 'audio') return;
+      const element = this.remoteAudioElements.get(track.sid);
+      if (element) {
+        try {
+          track.detach(element);
+        } catch (_) {}
+        element.remove();
+        this.remoteAudioElements.delete(track.sid);
+      }
+    });
+
+    await this.room.connect(url, token);
+    await this.room.localParticipant.setMicrophoneEnabled(true);
+
+    this.connected = true;
+    this.roomName = roomName;
+    this.activeCharacterId = characterId;
+
+    await ApiService.switchCharacter({
+      roomName,
+      characterToken: characterId,
+    });
+    await ApiService.setCharacterEngagement({
+      roomName,
+      engaged: true,
+      characterToken: characterId,
+    });
+  }
+
+  async disconnect() {
+    this.remoteAudioElements.forEach((element) => {
+      element.remove();
+    });
+    this.remoteAudioElements.clear();
+
+    if (this.connected && this.roomName) {
+      try {
+        await ApiService.setCharacterEngagement({
+          roomName: this.roomName,
+          engaged: false,
+        });
+      } catch (_) {}
+    }
+
+    if (this.room) {
+      this.room.disconnect();
+    }
+
+    this.room = null;
+    this.connected = false;
+    this.roomName = null;
+    this.activeCharacterId = null;
+    this.livekitUrl = null;
+  }
+}
+
+export default new VoiceChatService();

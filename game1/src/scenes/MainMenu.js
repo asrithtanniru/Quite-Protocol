@@ -159,7 +159,7 @@ export class MainMenu extends Scene {
         
         const instructions = [
             'Arrow keys for moving',
-            'SPACE for interacting with entities',
+            'A (or E) near entity to connect voice',
             'ESC for closing the dialogue'
         ];
         
