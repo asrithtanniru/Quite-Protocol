@@ -15,6 +15,7 @@ from agents.application.conversation_service.reset_conversation import (
 from agents.domain.philosopher_factory import PhilosopherFactory
 
 from .opik_utils import configure
+from .token_server import token_router
 
 configure()
 
@@ -38,6 +39,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(token_router)
 
 
 class ChatMessage(BaseModel):
