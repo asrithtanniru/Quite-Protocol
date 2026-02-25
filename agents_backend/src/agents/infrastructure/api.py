@@ -16,6 +16,7 @@ from agents.domain.philosopher_factory import PhilosopherFactory
 from agents.infrastructure.token_server import token_router
 
 from .opik_utils import configure
+from .token_server import token_router
 
 configure()
 

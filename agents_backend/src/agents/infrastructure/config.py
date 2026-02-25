@@ -1,0 +1,6 @@
+import os
+
+DATAHAVEN_URL = os.getenv("DATAHAVEN_URL")
+DATAHAVEN_API_KEY = os.getenv("DATAHAVEN_API_KEY")
+DATAHAVEN_BUCKET = "agents"
+
