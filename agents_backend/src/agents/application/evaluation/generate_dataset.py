@@ -53,7 +53,7 @@ class EvaluationDatasetGenerator:
 
                 break
 
-        assert len(dataset_samples) >= 0, "Could not generate any evaluation samples."
+        assert len(dataset_samples) > 0, "Could not generate any evaluation samples."
 
         logger.info(f"Generated {len(dataset_samples)} evaluation sample(s).")
         logger.info(f"Saving to '{settings.EVALUATION_DATASET_FILE_PATH}'")

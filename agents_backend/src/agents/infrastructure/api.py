@@ -48,8 +48,8 @@ class ChatMessage(BaseModel):
 @app.post("/chat")
 async def chat(chat_message: ChatMessage):
     try:
-        philosopher_factory = PhilosopherFactory()
-        philosopher = philosopher_factory.get_philosopher(chat_message.philosopher_id)
+        charter_factory = PhilosopherFactory()
+        philosopher = charter_factory.get_philosopher(chat_message.philosopher_id)
 
         response, _ = await get_response(
             messages=chat_message.message,
@@ -84,8 +84,8 @@ async def websocket_chat(websocket: WebSocket):
                 continue
 
             try:
-                philosopher_factory = PhilosopherFactory()
-                philosopher = philosopher_factory.get_philosopher(
+                charter_factory = PhilosopherFactory()
+                philosopher = charter_factory.get_philosopher(
                     data["philosopher_id"]
                 )
 
