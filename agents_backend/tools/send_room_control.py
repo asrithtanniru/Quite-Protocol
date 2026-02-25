@@ -17,6 +17,18 @@ load_dotenv(_ROOT / '.env')
 
 
 def _build_payload(args: argparse.Namespace) -> tuple[str, bytes]:
+    if args.engaged is not None:
+        topic = 'character_engagement'
+        payload = {'engaged': args.engaged}
+        if args.character_token:
+            payload['character_token'] = args.character_token
+        return topic, json.dumps(payload).encode('utf-8')
+
+    if args.character_token:
+        topic = 'character_switch'
+        payload = {'character_token': args.character_token}
+        return topic, json.dumps(payload).encode('utf-8')
+
     if args.active_agent:
         topic = 'active_agent'
         payload = {'agent_name': args.active_agent}
@@ -31,9 +43,19 @@ def _build_payload(args: argparse.Namespace) -> tuple[str, bytes]:
 
 
 async def _main() -> None:
+    def parse_bool(raw: str) -> bool:
+        normalized = raw.strip().lower()
+        if normalized in {'1', 'true', 'yes', 'on'}:
+            return True
+        if normalized in {'0', 'false', 'no', 'off'}:
+            return False
+        raise argparse.ArgumentTypeError('Expected true/false')
+
     parser = argparse.ArgumentParser(description='Send room control data to LiveKit room')
     parser.add_argument('--room', help='LiveKit room name')
     parser.add_argument('--list-rooms', action='store_true', help='List active rooms and exit')
+    parser.add_argument('--character-token', help='Switch character token, e.g. hospital1')
+    parser.add_argument('--engaged', type=parse_bool, help='Set character engagement true/false')
     parser.add_argument('--active-agent', help='Set active NPC, e.g. npc-guard')
     parser.add_argument(
         '--distances',
