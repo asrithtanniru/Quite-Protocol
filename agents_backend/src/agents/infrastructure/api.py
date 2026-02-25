@@ -26,6 +26,20 @@ app.add_middleware(
 app.include_router(token_router)
 
 
+@app.get("/debug/routes")
+async def debug_routes():
+    return {
+        "routes": [
+            {
+                "path": route.path,
+                "name": route.name,
+                "methods": sorted(route.methods) if getattr(route, "methods", None) else [],
+            }
+            for route in app.routes
+        ]
+    }
+
+
 class ChatMessage(BaseModel):
     message: str
     character_id: str | None = None

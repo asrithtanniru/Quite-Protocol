@@ -9,6 +9,7 @@ class VoiceChatService {
     this.livekitClient = null;
     this.remoteAudioElements = new Map();
     this.livekitUrl = null;
+    this.prelaunchedSession = null;
   }
 
   get isConnected() {
@@ -21,6 +22,15 @@ class VoiceChatService {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '');
     return `subject-${safePlayerName || 'subject'}-${Date.now()}`;
+  }
+
+  primeLaunchSession(session) {
+    this.prelaunchedSession = session
+      ? {
+          ...session,
+          userToken: session.userToken || session.token || null,
+        }
+      : null;
   }
 
   async loadLivekitClient() {
@@ -132,13 +142,31 @@ class VoiceChatService {
       await this.disconnect();
     }
 
-    const launchResponse = await ApiService.launchCharacterRoom({
-      roomName,
-      characterToken: initialCharacterId,
-      userIdentity: this._buildIdentity(safePlayerName),
-      userName: safePlayerName,
-      replaceExistingDispatches: true,
-    });
+    let launchResponse = null;
+    const canUsePrelaunched = Boolean(
+      this.prelaunchedSession
+      && this.prelaunchedSession.roomName === roomName
+      && this.prelaunchedSession.userToken
+      && (this.prelaunchedSession.url || window.__LIVEKIT_URL__)
+    );
+
+    if (canUsePrelaunched) {
+      launchResponse = {
+        user_token: this.prelaunchedSession.userToken,
+        livekit_url: this.prelaunchedSession.url || window.__LIVEKIT_URL__,
+        url: this.prelaunchedSession.url || window.__LIVEKIT_URL__,
+        room_name: this.prelaunchedSession.roomName,
+        character_token: this.prelaunchedSession.characterToken,
+      };
+    } else {
+      launchResponse = await ApiService.launchCharacterRoom({
+        roomName,
+        characterToken: initialCharacterId,
+        userIdentity: this._buildIdentity(safePlayerName),
+        userName: safePlayerName,
+        replaceExistingDispatches: true,
+      });
+    }
 
     const token = launchResponse.user_token;
     const url = launchResponse.livekit_url || launchResponse.url || window.__LIVEKIT_URL__;
@@ -156,11 +184,13 @@ class VoiceChatService {
     this._attachTrackListeners();
 
     await this.room.connect(url, token);
-    await this.room.localParticipant.setMicrophoneEnabled(true);
+    // Stay muted until the player explicitly starts speaking with a nearby character.
+    await this.room.localParticipant.setMicrophoneEnabled(false);
 
     this.connected = true;
     this.roomName = roomName;
     this.activeCharacterId = null;
+    this.prelaunchedSession = null;
 
     // Session starts disengaged. Talk button will enable engagement.
     await ApiService.setCharacterEngagement({
@@ -177,6 +207,9 @@ class VoiceChatService {
     });
 
     this.activeCharacterId = characterId;
+    if (this.room?.localParticipant) {
+      await this.room.localParticipant.setMicrophoneEnabled(true);
+    }
     await ApiService.switchCharacter({ roomName, characterToken: characterId });
     await ApiService.setCharacterEngagement({
       roomName,
@@ -192,6 +225,9 @@ class VoiceChatService {
     }
 
     this.activeCharacterId = null;
+    if (this.room?.localParticipant) {
+      await this.room.localParticipant.setMicrophoneEnabled(false);
+    }
     await ApiService.setCharacterEngagement({
       roomName: this.roomName,
       engaged: false,

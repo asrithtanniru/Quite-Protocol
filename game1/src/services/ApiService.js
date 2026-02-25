@@ -107,6 +107,15 @@ class ApiService {
     });
   }
 
+  async listLivekitCharacters() {
+    try {
+      return await this.request('/livekit/characters', 'GET');
+    } catch (_) {
+      // Backward compatibility if an older backend exposes unprefixed route.
+      return this.request('/characters', 'GET');
+    }
+  }
+
   getFallbackResponse(character) {
     return `I'm sorry, ${character.name || 'the character'} is unavailable at the moment. Please try again later.`;
   }

@@ -31,17 +31,37 @@ export class Game extends Scene
         this.menuPanel = null;
         this.voiceRoomName = null;
         this.voiceBootstrapped = false;
+        this.availableCharacterTokens = new Set();
+        this.fallbackCharacterToken = null;
     }
 
     init (data)
     {
         const rawPlayerName = data?.playerName;
         this.playerName = rawPlayerName?.trim() || 'Subject-0';
+        const launchBootstrap = data?.launchBootstrap || null;
+        const availableCharacters = Array.isArray(data?.availableCharacters) ? data.availableCharacters : [];
+        this.availableCharacterTokens = new Set(
+            availableCharacters
+                .map((item) => item?.character_token)
+                .filter(Boolean)
+        );
+        this.fallbackCharacterToken = availableCharacters[0]?.character_token || null;
+
         const roomSlug = this.playerName
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-+|-+$/g, '');
-        this.voiceRoomName = `quiet-protocol-${roomSlug || 'subject'}`;
+        this.voiceRoomName = launchBootstrap?.roomName || `quiet-protocol-session-${roomSlug || 'subject'}`;
+
+        if (launchBootstrap?.userToken && launchBootstrap?.url) {
+            VoiceChatService.primeLaunchSession({
+                roomName: this.voiceRoomName,
+                characterToken: launchBootstrap?.characterToken || this.fallbackCharacterToken,
+                userToken: launchBootstrap.userToken,
+                url: launchBootstrap.url,
+            });
+        }
     }
 
     create ()
@@ -267,7 +287,16 @@ export class Game extends Scene
 
             character.interactionDistance = config.interactionDistance || 55;
             character.proximityScript = config.proximityScript || [];
-            character.backendToken = config.backendToken || config.id;
+            const preferredToken = config.backendToken || config.id;
+            if (
+                this.availableCharacterTokens.size > 0
+                && !this.availableCharacterTokens.has(preferredToken)
+                && this.fallbackCharacterToken
+            ) {
+                character.backendToken = this.fallbackCharacterToken;
+            } else {
+                character.backendToken = preferredToken;
+            }
 
             this.characters.push(character);
         });
@@ -416,7 +445,7 @@ export class Game extends Scene
             lineSpacing: 5
         });
 
-        const hintText = this.add.text(boxX + boxWidth - 12, boxY + boxHeight - 8, 'Press A to connect voice', {
+        const hintText = this.add.text(boxX + boxWidth - 12, boxY + boxHeight - 8, 'Press A to talk', {
             font: '12px monospace',
             color: '#ffd28f'
         }).setOrigin(1, 1);
@@ -442,7 +471,7 @@ export class Game extends Scene
 
         this.proximityDialogue.nameText.setText(`◆ ${character.name}`);
         this.proximityDialogue.bodyText.setText(scriptLines.join('\n'));
-        this.proximityDialogue.hintText.setText('Press A to connect voice');
+        this.proximityDialogue.hintText.setText('Press A to talk');
         this.proximityDialogue.container.setVisible(true);
     }
 
@@ -474,10 +503,7 @@ export class Game extends Scene
             return;
         }
 
-        if (
-            Phaser.Input.Keyboard.JustDown(this.connectKey) ||
-            Phaser.Input.Keyboard.JustDown(this.interactKey)
-        ) {
+        if (Phaser.Input.Keyboard.JustDown(this.connectKey)) {
             this.hideProximityDialogue();
             this.connectVoiceForCharacter(nearbyCharacter);
         }
