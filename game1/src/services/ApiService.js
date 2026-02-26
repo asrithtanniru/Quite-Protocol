@@ -44,6 +44,78 @@ class ApiService {
     }
   }
 
+  async createLivekitToken({
+    roomName,
+    identity,
+    name,
+    metadata,
+    ttlMinutes = 60,
+  }) {
+    return this.request('/livekit/token', 'POST', {
+      room_name: roomName,
+      identity,
+      name,
+      metadata,
+      can_publish: true,
+      can_subscribe: true,
+      can_publish_data: true,
+      ttl_minutes: ttlMinutes,
+    });
+  }
+
+  async launchCharacterRoom({
+    roomName,
+    characterToken,
+    userIdentity,
+    userName,
+    ttlMinutes = 60,
+    replaceExistingDispatches = true,
+  }) {
+    return this.request('/livekit/character/launch', 'POST', {
+      room_name: roomName,
+      character_token: characterToken,
+      agent_name: 'npc-router',
+      replace_existing_dispatches: replaceExistingDispatches,
+      user_identity: userIdentity,
+      user_name: userName,
+      ttl_minutes: ttlMinutes,
+    });
+  }
+
+  async switchCharacter({ roomName, characterToken }) {
+    return this.request('/livekit/character/switch', 'POST', {
+      room_name: roomName,
+      character_token: characterToken,
+      mode: 'signal',
+      agent_name: 'npc-router',
+    });
+  }
+
+  async setCharacterEngagement({ roomName, engaged, characterToken = null }) {
+    return this.request('/livekit/character/engagement', 'POST', {
+      room_name: roomName,
+      engaged: Boolean(engaged),
+      character_token: characterToken,
+    });
+  }
+
+  async endCharacterRoom({ roomName, closeRoom = true, dispatchId = null }) {
+    return this.request('/livekit/character/end', 'POST', {
+      room_name: roomName,
+      close_room: Boolean(closeRoom),
+      dispatch_id: dispatchId,
+    });
+  }
+
+  async listLivekitCharacters() {
+    try {
+      return await this.request('/livekit/characters', 'GET');
+    } catch (_) {
+      // Backward compatibility if an older backend exposes unprefixed route.
+      return this.request('/characters', 'GET');
+    }
+  }
+
   getFallbackResponse(character) {
     return `I'm sorry, ${character.name || 'the character'} is unavailable at the moment. Please try again later.`;
   }
