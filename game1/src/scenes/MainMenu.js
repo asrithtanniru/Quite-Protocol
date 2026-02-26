@@ -1,5 +1,6 @@
 import { Scene } from 'phaser'
 import ApiService from '../services/ApiService'
+import DataHavenService from '../services/DataHavenService'
 import { walletAuthContext } from '../contexts/WalletAuthContext'
 import { GAME_FONT_FAMILY } from '../constants/fonts'
 
@@ -37,6 +38,7 @@ export class MainMenu extends Scene {
     // })
 
     this.setupWalletUI()
+    this.setupDataHavenUI()
     this.events.once('shutdown', () => {
       this.cleanupWalletUI()
       this.destroyNameEntryDialog()
@@ -544,6 +546,56 @@ export class MainMenu extends Scene {
 
     elements.closeButton.destroy()
     elements.closeText.destroy()
+  }
+
+  setupDataHavenUI() {
+    const x = 170
+    const y = 64
+
+    this.dataHavenStatus = this.add
+      .text(x, y - 24, 'StorageHub: Disconnected', {
+        fontSize: '16px',
+        fontFamily: GAME_FONT_FAMILY,
+        color: '#ffffff',
+        fontStyle: 'bold',
+        backgroundColor: '#000000',
+      })
+      .setOrigin(0.5)
+
+    this.dataHavenButton = this.createButton(x, y + 24, 'Connect Storage', () => this.handleDataHavenClick(), {
+      buttonWidth: 220,
+      buttonHeight: 46,
+      maxFontSize: 18,
+    })
+  }
+
+  async handleDataHavenClick() {
+    try {
+      this.dataHavenStatus.setText('Connecting MetaMask...')
+      this.dataHavenStatus.setColor('#ffff00')
+
+      await DataHavenService.connectWallet()
+
+      this.dataHavenStatus.setText('Authenticating...')
+      await DataHavenService.connectMSP()
+      await DataHavenService.authenticate()
+
+      this.dataHavenStatus.setText('DataHaven Connected')
+      this.dataHavenStatus.setColor('#00ff00')
+      this.dataHavenButton.button.input.enabled = false
+      this.dataHavenButton.text.setText('Storage Active')
+      this.dataHavenButton.text.setColor('#888888')
+    } catch (error) {
+      console.error('DataHaven Error:', error)
+      this.dataHavenStatus.setText('Connection Failed')
+      this.dataHavenStatus.setColor('#ff0000')
+
+      // Reset after delay
+      this.time.delayedCall(3000, () => {
+        this.dataHavenStatus.setText('StorageHub: Disconnected')
+        this.dataHavenStatus.setColor('#ffffff')
+      })
+    }
   }
 
   setupWalletUI() {

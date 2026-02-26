@@ -195,6 +195,8 @@ def list_characters() -> dict[str, list[dict[str, str]]]:
             "character_token": token,
             "name": str(data.get("name", "Unknown")),
             "agent_type": str(data.get("agent_type", "unknown")),
+            "role": str(data.get("role", "")),
+            "emotion_tag": str(data.get("emotion_tag", "")),
         }
         for token, data in characters.items()
     ]
