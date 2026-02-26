@@ -475,6 +475,15 @@ export class Game extends Scene
         this.proximityDialogue.container.setVisible(true);
     }
 
+    getCharacterOverview(character) {
+        if (!character?.agentInfoId) {
+            return '';
+        }
+
+        const agent = this.agentInfoById[character.agentInfoId];
+        return buildCharacterOverview(agent);
+    }
+
     hideProximityDialogue() {
         if (this.proximityDialogue) {
             this.proximityDialogue.container.setVisible(false);
