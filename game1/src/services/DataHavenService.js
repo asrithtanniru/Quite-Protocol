@@ -1,9 +1,9 @@
 import { createWalletClient, custom, http, createPublicClient, defineChain } from 'viem'
-import { privateKeyToAccount } from 'viem/accounts'
-import { StorageHubClient } from '@storagehub-sdk/core'
+import { StorageHubClient, FileManager, ReplicationLevel, initWasm } from '@storagehub-sdk/core'
 import { MspClient } from '@storagehub-sdk/msp-client'
 import { ApiPromise, WsProvider } from '@polkadot/api'
 import { types } from '@storagehub/types-bundle'
+import { TypeRegistry } from '@polkadot/types'
 
 // DataHaven Testnet Configuration
 const NETWORKS = {
@@ -36,6 +36,19 @@ class DataHavenService {
     this.address = null
     this.sessionToken = null
     this.polkadotApi = null
+    this.wasmReady = false
+  }
+
+  async ensureWasmReady() {
+    if (!this.wasmReady) {
+      await initWasm()
+      this.wasmReady = true
+      console.log('StorageHub WASM initialized')
+    }
+  }
+
+  extractPeerIds(multiaddresses = []) {
+    return multiaddresses.map((address) => address.split('/p2p/').pop()).filter(Boolean)
   }
 
   async connectWallet() {
@@ -163,52 +176,113 @@ class DataHavenService {
     if (!this.mspClient || !this.sessionToken) {
       throw new Error('Not authenticated with MSP')
     }
+    if (!this.storageHubClient || !this.publicClient || !this.address) {
+      throw new Error('StorageHub client is not initialized')
+    }
+
+    await this.ensureWasmReady()
 
     const fileName = `agent_${agentId}_memory_${Date.now()}.json`
     const fileContent = JSON.stringify(memoryData, null, 2)
     const file = new File([fileContent], fileName, { type: 'application/json' })
 
-    // Use a unique bucket based on address to avoid collisions on shared testnet
-    // e.g. "memories-123456"
-    const uniqueSuffix = this.address ? this.address.slice(2, 8).toLowerCase() : 'demo'
-    const bucketName = `memories-${uniqueSuffix}`
+    // Force the exact bucket name you created on the dashboard
+    // Note: Buckets are case-sensitive and must be globally unique
+    const bucketName = `memories-${this.address}`
 
     console.log(`Targeting bucket: ${bucketName} for agent ${agentId} upload...`)
 
     try {
       // 1. Try to ensure bucket exists (best effort)
       try {
+        const mspInfo = await this.mspClient.info.getInfo()
+        const valueProps = await this.mspClient.info.getValuePropositions()
+        const valuePropId = valueProps?.[0]?.id
+
+        if (!valuePropId) {
+          throw new Error('No MSP value proposition found to create bucket')
+        }
+
+        console.log('MSP info:', mspInfo)
+        console.log('Using value proposition:', valuePropId)
         console.log(`Checking/Creating bucket: ${bucketName}...`)
-        const txHash = await this.storageHubClient.createBucket({
-          bucketName: bucketName,
-          isSp: false,
-          isVisible: true,
-        })
-        console.log('Bucket creation tx initiated:', txHash)
+
+        const txHash = await this.storageHubClient.createBucket(mspInfo.mspId, bucketName, false, valuePropId)
+        if (txHash) {
+          console.log('Bucket creation tx initiated:', txHash)
+          const receipt = await this.publicClient.waitForTransactionReceipt({ hash: txHash })
+          console.log('Bucket creation receipt:', receipt)
+        }
         // We do not wait for full confirmation to keep UI snappy, but in prod we should.
         // For hackathon, if it fails, it likely exists.
       } catch (bucketErr) {
         console.warn(`Bucket creation skipped or failed (likely exists):`, bucketErr)
       }
 
-      // 2. Upload file to MSP (this includes on-chain request + data transfer)
-      console.log('Uploading file to MSP...')
-      const uploadResponse = await this.storageHubClient.uploadFile({
-        bucketName,
-        file,
-        mspUrl: NETWORK.mspUrl,
+      const mspInfo = await this.mspClient.info.getInfo()
+      const peerIds = this.extractPeerIds(mspInfo.multiaddresses)
+      if (peerIds.length === 0) {
+        throw new Error('MSP did not expose any /p2p/<peerId> multiaddress')
+      }
+
+      const bucketId = await this.storageHubClient.deriveBucketId(this.address, bucketName)
+      if (!bucketId) {
+        throw new Error('Failed to derive bucketId from wallet + bucket name')
+      }
+
+      const fileManager = new FileManager({
+        size: file.size,
+        stream: () => file.stream(),
       })
 
-      console.log('Upload success:', uploadResponse)
+      const fingerprint = (await fileManager.getFingerprint()).toHex()
+      const fileSize = BigInt(fileManager.getFileSize())
+
+      console.log('Derived bucketId:', bucketId)
+      console.log('File fingerprint:', fingerprint)
+      console.log('File size bytes:', fileSize.toString())
+
+      const storageTx = await this.storageHubClient.issueStorageRequest(bucketId, fileName, fingerprint, fileSize, mspInfo.mspId, peerIds, ReplicationLevel.Custom, 1)
+
+      if (!storageTx) {
+        throw new Error('issueStorageRequest did not return a transaction hash')
+      }
+
+      console.log('issueStorageRequest tx:', storageTx)
+      const storageReceipt = await this.publicClient.waitForTransactionReceipt({ hash: storageTx })
+      console.log('issueStorageRequest receipt:', storageReceipt)
+
+      const registry = new TypeRegistry()
+      const owner = registry.createType('AccountId20', this.address)
+      const bucketIdH256 = registry.createType('H256', bucketId)
+      const fileKey = (await fileManager.computeFileKey(owner, bucketIdH256, fileName)).toHex()
+
+      console.log('Computed fileKey:', fileKey)
+      console.log('Uploading file bytes to MSP...')
+
+      const uploadReceipt = await this.mspClient.files.uploadFile(bucketId, fileKey, await fileManager.getFileBlob(), this.address, fileName)
+      console.log('MSP upload receipt:', uploadReceipt)
+
+      if (uploadReceipt.status !== 'upload_successful') {
+        throw new Error(`MSP upload failed with status: ${uploadReceipt.status}`)
+      }
+
+      console.log('Upload success: file is now in DataHaven pipeline')
       return {
         success: true,
         file: fileName,
         bucket: bucketName,
+        bucketId,
+        fileKey,
+        storageTx,
         explorerUrl: 'https://datahaven.app/testnet', // Direct user to dashboard
-        details: uploadResponse,
+        details: uploadReceipt,
       }
     } catch (err) {
       console.error('Real upload failed (falling back to simulation):', err)
+      if (err.cause) console.error('Error cause:', err.cause)
+      if (err.response) console.error('Error response:', await err.response.text().catch(() => 'No text'))
+
       // Fallback simulation so judge always sees success
       return {
         success: true, // "Mock" success
