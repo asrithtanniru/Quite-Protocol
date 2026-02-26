@@ -2,6 +2,53 @@ import { Scene } from 'phaser';
 import Character from '../classes/Character';
 import DialogueBox from '../classes/DialogueBox';
 import DialogueManager from '../classes/DialogueManager';
+import agentInfoData from '../../../agents_backend/src/agents/agent_info/agent_info.json';
+
+const CHARACTER_TO_AGENT_INFO_ID = {
+    mira_sanyal: 'hospital1',
+    raghav_204: 'hospital2',
+    meera_kapoor: 'hospital3',
+    janitor_fragment: 'hospital7',
+    ai_core: 'ai1',
+    archive_nurse: 'hospital4',
+    subject_nila: 'hospital5',
+    orderly_omkar: 'police1',
+    warden_node: 'hospital6',
+    echo_child: 'env1'
+};
+
+function buildAgentInfoIndex(data) {
+    const index = {};
+    Object.values(data).forEach((group) => {
+        group.forEach((agent) => {
+            if (agent.id) {
+                index[agent.id] = agent;
+            }
+        });
+    });
+    return index;
+}
+
+function buildCharacterOverview(agent) {
+    if (!agent || !agent.role) {
+        return '';
+    }
+
+    const firstSentence = agent.role
+        .replace(/\s+/g, ' ')
+        .trim()
+        .split(/[.!?]/)[0]
+        .trim();
+
+    const normalized = firstSentence
+        .replace(/^you are\s+/i, '')
+        .replace(/\byou\b/gi, 'the character')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const oneLine = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+    return oneLine.endsWith('.') ? oneLine : `${oneLine}.`;
+}
 
 export class Game extends Scene
 {
@@ -24,6 +71,7 @@ export class Game extends Scene
         this.accessNoticeTimer = null;
         this.proximityDialogue = null;
         this.activeNearbyCharacterId = null;
+        this.agentInfoById = buildAgentInfoIndex(agentInfoData);
     }
 
     init (data)
@@ -250,6 +298,7 @@ export class Game extends Scene
             character.requiredContacts = config.requiredContacts || 0;
             character.requiredCharacterIds = config.requiredCharacterIds || [];
             character.proximityScript = config.proximityScript || [];
+            character.agentInfoId = CHARACTER_TO_AGENT_INFO_ID[config.id] || null;
 
             this.characters.push(character);
         });
@@ -377,7 +426,10 @@ export class Game extends Scene
         }
 
         const accessState = this.getCharacterAccessState(character);
-        const scriptLines = character.proximityScript.length > 0
+        const overview = this.getCharacterOverview(character);
+        const scriptLines = overview
+            ? [overview]
+            : character.proximityScript.length > 0
             ? character.proximityScript
             : [character.defaultMessage];
 
@@ -385,6 +437,15 @@ export class Game extends Scene
         this.proximityDialogue.bodyText.setText(scriptLines.join('\n'));
         this.proximityDialogue.hintText.setText(accessState.allowed ? 'Press E to talk' : 'Press E to attempt contact');
         this.proximityDialogue.container.setVisible(true);
+    }
+
+    getCharacterOverview(character) {
+        if (!character?.agentInfoId) {
+            return '';
+        }
+
+        const agent = this.agentInfoById[character.agentInfoId];
+        return buildCharacterOverview(agent);
     }
 
     hideProximityDialogue() {
